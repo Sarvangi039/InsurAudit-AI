@@ -1,0 +1,9 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pydantic>=2.6.0
+python-multipart>=0.0.9
+python-dotenv>=1.0.1
+pymupdf>=1.23.26
+google-generativeai>=0.8.0
+google-genai>=0.1.1
+sqlite3-to-mysql; python_version < "3.0" # just placeholder if needed, sqlite3 is standard lib

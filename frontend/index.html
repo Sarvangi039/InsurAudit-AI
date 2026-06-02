@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InsurAudit.AI — Smart Insurance Claim Auditing</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="dark-theme">
+    <!-- Main Dashboard Container -->
+    <div class="app-container">
+        
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-logo">
+                <i class="fa-solid fa-shield-halved logo-icon"></i>
+                <div class="logo-text">
+                    <h1>InsurAudit<span class="logo-sub">.AI</span></h1>
+                    <p class="logo-tagline">Claims Document Auditor MVP</p>
+                </div>
+            </div>
+            
+            <div class="header-actions">
+                <button id="btn-settings" class="btn btn-secondary tooltip" title="Configure API Settings">
+                    <i class="fa-solid fa-sliders"></i> Settings
+                </button>
+                <button id="btn-trigger-upload" class="btn btn-primary">
+                    <i class="fa-solid fa-cloud-arrow-up"></i> Upload New Claim
+                </button>
+            </div>
+        </header>
+        
+        <!-- Main Layout Split -->
+        <main class="app-main">
+            
+            <!-- LEFT PANEL: Ledger and Visual Viewer -->
+            <section class="left-panel">
+                
+                <!-- Section A: Claims Ledger (Collapsible/Sticky) -->
+                <div class="panel-card ledger-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-list-check"></i> Claims Ingestion Ledger</h2>
+                        <span id="ledger-count" class="badge badge-info">0 Claims</span>
+                    </div>
+                    <div class="ledger-table-container">
+                        <table class="ledger-table">
+                            <thead>
+                                <tr>
+                                    <th>Patient & Policy</th>
+                                    <th>Total Claimed</th>
+                                    <th>Risk Score</th>
+                                    <th>Status</th>
+                                    <th>Date Added</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ledger-body">
+                                <tr>
+                                    <td colspan="5" class="text-center text-muted py-4">
+                                        <i class="fa-solid fa-circle-notch fa-spin"></i> Loading claim registry...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Section B: Document Viewer Split -->
+                <div class="panel-card viewer-card">
+                    <div class="card-header doc-viewer-header">
+                        <div class="header-title-group">
+                            <h2><i class="fa-solid fa-file-invoice"></i> Document Ingestion Viewer</h2>
+                            <span id="active-document-name" class="text-muted text-sm ml-2"></span>
+                        </div>
+                        <div id="doc-tabs-container" class="doc-tabs">
+                            <!-- Document tabs dynamically generated here -->
+                        </div>
+                    </div>
+                    
+                    <div class="viewer-body">
+                        <!-- Dropzone for claim files -->
+                        <div id="dropzone" class="upload-dropzone">
+                            <i class="fa-solid fa-file-pdf upload-icon"></i>
+                            <h3>Upload Claim Bundle Docs</h3>
+                            <p>Drag and drop PDF, PNG, or JPEG files here</p>
+                            <p class="text-xs text-muted">Supports Claim Form, Bills, Discharge Summary, Prescriptions, Policy Docs, ID Proofs</p>
+                            <input type="file" id="file-input" multiple accept=".pdf,.png,.jpg,.jpeg" class="hidden-input">
+                            <button id="btn-browse" class="btn btn-secondary mt-3">Browse Files</button>
+                        </div>
+                        
+                        <!-- Uploading/Processing Loader Overlay -->
+                        <div id="processing-overlay" class="loader-overlay hidden">
+                            <div class="loader-spinner"></div>
+                            <h3 id="loader-title">Processing Documents...</h3>
+                            <p id="loader-subtitle" class="text-muted">Running PyMuPDF rendering & Gemini Vision OCR</p>
+                        </div>
+                        
+                        <!-- Document Display Frame -->
+                        <div id="viewer-display" class="viewer-display hidden">
+                            <div class="viewer-controls">
+                                <button id="btn-zoom-out" class="btn-icon"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
+                                <span id="zoom-level">100%</span>
+                                <button id="btn-zoom-in" class="btn-icon"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
+                                <button id="btn-rotate" class="btn-icon"><i class="fa-solid fa-rotate"></i></button>
+                                <div class="page-nav ml-auto">
+                                    <button id="btn-prev-page" class="btn-icon"><i class="fa-solid fa-chevron-left"></i></button>
+                                    <span id="page-num-display">Page 1 / 1</span>
+                                    <button id="btn-next-page" class="btn-icon"><i class="fa-solid fa-chevron-right"></i></button>
+                                </div>
+                            </div>
+                            <div class="image-wrapper">
+                                <img id="viewer-image" src="" alt="Claim Document Page">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- RIGHT PANEL: Audit Details & Decisioning -->
+            <section class="right-panel">
+                
+                <!-- Main Inspection Workspace -->
+                <div id="audit-details-workspace" class="audit-workspace empty-state">
+                    <!-- Placeholder when no claim is selected -->
+                    <div class="empty-workspace-message">
+                        <i class="fa-solid fa-arrow-left-long pulse-arrow"></i>
+                        <h3>Select a Claim to Inspect</h3>
+                        <p class="text-muted">Click on a claim row in the ledger or upload new claim documents to run the analysis.</p>
+                    </div>
+                    
+                    <!-- Content (Initially Hidden) -->
+                    <div id="workspace-content" class="workspace-content hidden">
+                        
+                        <!-- Header Dashboard Stats -->
+                        <div class="workspace-header-panel">
+                            <div class="patient-profile">
+                                <div class="profile-avatar">
+                                    <i class="fa-solid fa-user-tie"></i>
+                                </div>
+                                <div class="profile-info">
+                                    <h3 id="patient-name-display">Ramesh Kumar Shah</h3>
+                                    <p class="policy-details">Policy No: <span id="policy-num-display" class="highlight">POL-994821</span></p>
+                                </div>
+                            </div>
+                            
+                            <div class="risk-gauge-container">
+                                <div class="radial-gauge">
+                                    <svg viewBox="0 0 100 100" class="gauge-svg">
+                                        <circle class="gauge-bg" cx="50" cy="50" r="40"></circle>
+                                        <circle id="gauge-progress" class="gauge-progress" cx="50" cy="50" r="40" stroke-dasharray="251.2" stroke-dashoffset="251.2"></circle>
+                                    </svg>
+                                    <div class="gauge-text">
+                                        <span id="risk-score-value">0</span>
+                                        <span class="gauge-label">RISK SCORE</span>
+                                    </div>
+                                </div>
+                                <div class="risk-rating">
+                                    <span id="risk-rating-badge" class="badge">PENDING</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- AI Briefing Summary Box -->
+                        <div class="panel-card ai-summary-card">
+                            <div class="card-header font-bold text-gradient">
+                                <h2><i class="fa-solid fa-brain"></i> AI Auditor executive summary</h2>
+                            </div>
+                            <div class="card-body">
+                                <p id="ai-summary-text" class="summary-text-styled">
+                                    Click "Trigger Process Pipeline" to compile and analyze the uploaded claims documents.
+                                </p>
+                            </div>
+                        </div>
+                        
+                        <!-- Split Section: Audit Rules Check & Claims Profile -->
+                        <div class="details-split-grid">
+                            
+                            <!-- Tab A: Audit Rules Matrix -->
+                            <div class="panel-card rules-card">
+                                <div class="card-header">
+                                    <h2><i class="fa-solid fa-clipboard-list"></i> Automated Rules Engine</h2>
+                                    <button id="btn-process-pipeline" class="btn btn-accent btn-sm">
+                                        <i class="fa-solid fa-play"></i> Process Claim
+                                    </button>
+                                </div>
+                                <div class="rules-tabs">
+                                    <button class="rule-tab active" data-filter="all">All (<span id="rule-count-all">0</span>)</button>
+                                    <button class="rule-tab" data-filter="failed">Triggered (<span id="rule-count-failed">0</span>)</button>
+                                    <button class="rule-tab" data-filter="passed">Cleared (<span id="rule-count-passed">0</span>)</button>
+                                </div>
+                                <div id="rules-list-container" class="rules-list scrollable-panel">
+                                    <!-- Rules list generated here -->
+                                </div>
+                            </div>
+                            
+                            <!-- Tab B: Extracted Data Profile -->
+                            <div class="panel-card profile-card">
+                                <div class="card-header">
+                                    <h2><i class="fa-solid fa-id-card"></i> Extracted Claims Profile</h2>
+                                    <button id="btn-save-profile" class="btn btn-secondary btn-sm hidden">
+                                        <i class="fa-solid fa-rotate"></i> Re-evaluate Rules
+                                    </button>
+                                </div>
+                                <div class="profile-formscroll scrollable-panel">
+                                    <form id="profile-edit-form" class="profile-form">
+                                        <div class="form-grid">
+                                            <div class="form-group">
+                                                <label for="prof-patient-name">Patient Name</label>
+                                                <input type="text" id="prof-patient-name">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="prof-policy-num">Policy Number</label>
+                                                <input type="text" id="prof-policy-num">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="prof-admission-date">Admission Date</label>
+                                                <input type="date" id="prof-admission-date">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="prof-discharge-date">Discharge Date</label>
+                                                <input type="date" id="prof-discharge-date">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="prof-total-claimed">Total Claimed (Rs.)</label>
+                                                <input type="number" id="prof-total-claimed" step="0.01">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="prof-hospital-name">Hospital Name</label>
+                                                <input type="text" id="prof-hospital-name">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="prof-doctor-reg">Doctor Reg. No.</label>
+                                                <input type="text" id="prof-doctor-reg">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="prof-diagnosis">Diagnosis</label>
+                                                <input type="text" id="prof-diagnosis">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="prof-rent-limit">Policy Room Rent Limit</label>
+                                                <input type="number" id="prof-rent-limit" step="0.1">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="prof-policy-start">Policy Start Date</label>
+                                                <input type="date" id="prof-policy-start">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="prof-policy-end">Policy End Date</label>
+                                                <input type="date" id="prof-policy-end">
+                                            </div>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Auditor Review Decisions Card -->
+                        <div class="panel-card decision-card">
+                            <div class="card-header">
+                                <h2><i class="fa-solid fa-gavel"></i> Auditor Review Board & Sign-off</h2>
+                                <span id="current-claim-status" class="status-badge status-pending">PENDING AUDIT</span>
+                            </div>
+                            <div class="card-body decision-layout">
+                                <div class="comments-section">
+                                    <label for="auditor-comments"><i class="fa-solid fa-message"></i> Audit Review Findings & Notes</label>
+                                    <textarea id="auditor-comments" placeholder="Document reasoning for approval, query, or rejection here. E.g., 'Validated name discrepancy against Aadhar card. Approved Room Rate override.'" rows="3"></textarea>
+                                </div>
+                                <div class="decision-buttons">
+                                    <button id="btn-decision-query" class="btn btn-warning flex-1">
+                                        <i class="fa-solid fa-question-circle"></i> Query Claim
+                                    </button>
+                                    <button id="btn-decision-reject" class="btn btn-danger flex-1">
+                                        <i class="fa-solid fa-ban"></i> Reject Claim
+                                    </button>
+                                    <button id="btn-decision-approve" class="btn btn-success flex-1">
+                                        <i class="fa-solid fa-square-check"></i> Approve Claim
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                    </div>
+                </div>
+            </section>
+            
+        </main>
+    </div>
+    
+    <!-- SETTINGS MODAL -->
+    <div id="settings-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-gears"></i> InsurAudit Settings</h2>
+                <button id="btn-close-settings" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="input-api-key">Gemini API Key</label>
+                    <p class="text-xs text-muted mb-2">Used locally in the browser to perform vision OCR and explanations. Kept locally in browser cache.</p>
+                    <input type="password" id="input-api-key" placeholder="AIzaSy...">
+                </div>
+                <div class="form-group mt-3">
+                    <label for="input-auditor-id">Auditor Name / ID</label>
+                    <input type="text" id="input-auditor-id" value="Auditor-01">
+                </div>
+                <div class="settings-actions mt-4">
+                    <button id="btn-save-settings" class="btn btn-primary w-full">Save & Apply Settings</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>
