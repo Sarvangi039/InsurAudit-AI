@@ -157,11 +157,43 @@ function renderLedgerTable(claims) {
             <td><span class="badge ${riskClass}">${claim.risk_score}/100</span></td>
             <td><span class="status-badge ${statusClass}">${claim.status}</span></td>
             <td class="text-muted">${date}</td>
+            <td style="width: 30px; text-align: right;">
+                <button onclick="deleteClaim('${claim.id}', event)" class="btn-delete-claim" title="Delete Claim" style="background:none; border:none; color:#ef4444; cursor:pointer; padding:5px;">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </td>
         `;
 
         tr.addEventListener('click', () => selectClaim(claim.id));
         ledgerBody.appendChild(tr);
     });
+}
+
+// Delete a claim
+async function deleteClaim(claimId, event) {
+    event.stopPropagation(); // Prevent row click
+    if (!confirm('Are you sure you want to permanently delete this claim?')) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/claims/${claimId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            if (currentClaimId === claimId) {
+                currentClaimId = null;
+                currentClaimData = null;
+                workspaceContent.style.display = 'none';
+                workspaceEmptyState.style.display = 'flex';
+            }
+            loadClaimsLedger();
+        } else {
+            alert('Failed to delete claim');
+        }
+    } catch (error) {
+        console.error('Error deleting claim:', error);
+        alert('Error connecting to server');
+    }
 }
 
 // Select a claim to inspect

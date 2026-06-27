@@ -7,3 +7,4 @@ pymupdf>=1.23.26
 google-generativeai>=0.8.0
 google-genai>=0.1.1
 sqlite3-to-mysql; python_version < "3.0" # just placeholder if needed, sqlite3 is standard lib
+groq>=0.9.0

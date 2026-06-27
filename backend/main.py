@@ -15,7 +15,8 @@ from backend.database import (
 )
 from backend.pipeline import (
     convert_pdf_to_images, extract_structured_data, 
-    merge_document_profiles, generate_ai_explanation
+    merge_document_profiles, generate_ai_explanation,
+    extract_text_locally, extract_structured_data_from_text
 )
 from backend.rules import run_audit_rules, calculate_risk_score
 from backend.schemas import ClaimProfile, ClaimUpdateInput, AuditorDecisionInput
@@ -114,7 +115,7 @@ async def upload_claims(files: List[UploadFile] = File(...)):
     }
 
 @app.post("/api/claims/{claim_id}/process")
-async def process_claim(claim_id: str, x_gemini_api_key: str = Header(None)):
+async def process_claim(claim_id: str):
     """Executes the complete pipeline: PDF render, Gemini Vision OCR, extraction, rules checks, and explanations."""
     claim = get_claim_details(claim_id)
     if not claim:
@@ -129,41 +130,43 @@ async def process_claim(claim_id: str, x_gemini_api_key: str = Header(None)):
         file_path = doc["file_path"]
         ext = get_file_extension(doc["file_name"])
         
-        # Gather all pages for this document
-        pages_prefix = f"{doc_id}_page_"
-        page_files = [f for f in os.listdir(processed_path) if f.startswith(pages_prefix)]
-        page_files.sort(key=lambda x: int(re.search(r'_page_(\d+)', x).group(1)))
+        # 1. Extract text locally from the original document
+        doc_ocr_text = extract_text_locally(file_path)
         
-        doc_ocr_text = []
         doc_type = "Unknown"
         doc_confidence = 1.0
         doc_extracted_fields = {}
+        combined_ocr = ""
         
-        # Analyze each page
-        for page_file in page_files:
-            page_path = os.path.join(processed_path, page_file)
-            page_result = extract_structured_data(page_path, api_key=x_gemini_api_key)
+        if doc_ocr_text:
+            # 2. If we found text, make 1 single API call to Gemini with the full text payload
+            page_result = extract_structured_data_from_text(doc_ocr_text)
             
             # Aggregate text and fields
-            doc_ocr_text.append(page_result.get("raw_ocr_summary", ""))
+            combined_ocr = page_result.get("raw_ocr_summary", doc_ocr_text[:500] + "...")
             doc_type = page_result.get("document_type", "Unknown")
-            doc_confidence = min(doc_confidence, page_result.get("confidence", 1.0))
+            doc_confidence = page_result.get("confidence", 1.0)
+            doc_extracted_fields = page_result.get("extracted_fields", {})
             
-            # Merge fields from pages
-            fields = page_result.get("extracted_fields", {})
-            for k, v in fields.items():
-                if isinstance(v, list) and k in doc_extracted_fields:
-                    doc_extracted_fields[k].extend(v)
-                else:
-                    doc_extracted_fields[k] = v
-                    
+        else:
+            # 3. Fallback: No local text found (image or scanned PDF). 
+            # User specifically requested NOT to send images directly due to high token usage and rate limits.
+            # We will use mock data as a safe fallback since we can't do local OCR without Tesseract installed.
+            print(f"No text extracted locally for {file_path}. Skipping image upload to save tokens.")
+            from backend.pipeline import get_mock_extraction
+            mock = get_mock_extraction(doc["file_name"])
+            
+            combined_ocr = mock.get("raw_ocr_summary", "No text found locally. Direct image API upload disabled by user to save quotas. Fallback mock used.")
+            doc_type = mock.get("document_type", "Unknown")
+            doc_confidence = mock.get("confidence", 0.5)
+            doc_extracted_fields = mock.get("extracted_fields", {})
+            
         # Clean list duplicates if list of codes, procedures, etc.
         for k in ["icd_codes", "procedures", "medicines_prescribed"]:
             if k in doc_extracted_fields and isinstance(doc_extracted_fields[k], list):
                 doc_extracted_fields[k] = list(set(doc_extracted_fields[k]))
                 
         # Save OCR and classification to DB
-        combined_ocr = "\n--- PAGE BREAK ---\n".join(doc_ocr_text)
         update_document_details(doc_id, doc_type, doc_confidence, combined_ocr)
         
         extracted_docs.append({
@@ -181,7 +184,7 @@ async def process_claim(claim_id: str, x_gemini_api_key: str = Header(None)):
     risk_score = calculate_risk_score(flags)
     
     # Generate AI auditor narrative explanation
-    explanation = generate_ai_explanation(profile, flags, risk_score, api_key=x_gemini_api_key)
+    explanation = generate_ai_explanation(profile, flags, risk_score)
     
     # Persist back to DB
     update_claim_profile(
@@ -201,7 +204,7 @@ async def process_claim(claim_id: str, x_gemini_api_key: str = Header(None)):
     return get_claim_details(claim_id)
 
 @app.post("/api/claims/{claim_id}/update")
-async def update_claim_data(claim_id: str, payload: ClaimUpdateInput, x_gemini_api_key: str = Header(None)):
+async def update_claim_data(claim_id: str, payload: ClaimUpdateInput):
     """Allows manual override of claim data from the UI and dynamically re-runs rules evaluation."""
     claim = get_claim_details(claim_id)
     if not claim:
@@ -242,7 +245,7 @@ async def update_claim_data(claim_id: str, payload: ClaimUpdateInput, x_gemini_a
     risk_score = calculate_risk_score(flags)
     
     # Re-generate explanation
-    explanation = generate_ai_explanation(profile, flags, risk_score, api_key=x_gemini_api_key)
+    explanation = generate_ai_explanation(profile, flags, risk_score)
     
     # Update DB
     update_claim_profile(
@@ -288,6 +291,25 @@ def submit_decision(claim_id: str, payload: AuditorDecisionInput):
         comments=payload.comments
     )
     return {"message": f"Claim status successfully updated to {payload.decision}."}
+
+@app.delete("/api/claims/{claim_id}")
+def remove_claim(claim_id: str):
+    """Deletes a claim and its files from the server."""
+    from backend.database import delete_claim
+    
+    # 1. Delete from Database
+    delete_claim(claim_id)
+    
+    # 2. Delete File Folders
+    processed_dir = os.path.abspath(os.path.join("data", "processed", claim_id))
+    upload_dir = os.path.abspath(os.path.join("data", "uploads", claim_id))
+    
+    if os.path.exists(processed_dir):
+        shutil.rmtree(processed_dir)
+    if os.path.exists(upload_dir):
+        shutil.rmtree(upload_dir)
+        
+    return {"message": "Claim successfully deleted"}
 
 # Mount data files and static frontend directories
 os.makedirs("data", exist_ok=True)

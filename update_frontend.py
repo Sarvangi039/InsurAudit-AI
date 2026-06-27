@@ -1,0 +1,576 @@
+import json
+
+html_content = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InsurAudit.AI - Workstation</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        navy: { 900: '#0F172A', 800: '#1E293B', 700: '#334155' },
+                        brand: { 400: '#818CF8', 500: '#6366F1', 600: '#4F46E5' }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <!-- Fonts & Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #F8FAFC; margin: 0; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+        .h-screen-nav { height: calc(100vh - 56px); }
+        .glow-red { box-shadow: 0 0 8px rgba(239, 68, 68, 0.6); }
+        .glow-brand { box-shadow: 0 0 12px rgba(99, 102, 241, 0.4); }
+        .spinner { border: 2px solid rgba(255,255,255,0.1); border-left-color: #fff; border-radius: 50%; width: 14px; height: 14px; animation: spin 1s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        /** @jsx React.createElement */
+        /** @jsxFrag React.Fragment */
+        const { useState, useEffect, useRef } = React;
+
+        const ArcGauge = ({ score }) => {
+            let color = "text-green-500";
+            if (score > 25) color = "text-yellow-400";
+            if (score > 50) color = "text-orange-500";
+            if (score > 75) color = "text-red-500";
+
+            const circumference = 56.5; 
+            const strokeDasharray = `${(score / 100) * circumference}, 100`;
+
+            return (
+                <div className="relative w-[50px] h-[50px] flex items-center justify-center">
+                    <svg viewBox="0 0 36 36" className="w-full h-full transform -rotate-90">
+                        <path className="text-slate-700" strokeWidth="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                        <path className={color} strokeDasharray={strokeDasharray} strokeWidth="4" stroke="currentColor" fill="none" strokeLinecap="round" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                    </svg>
+                    <div className="absolute flex flex-col items-center justify-center text-center">
+                        <span className="text-sm font-bold text-slate-100">{score}</span>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [claims, setClaims] = useState([]);
+            const [selectedClaim, setSelectedClaim] = useState(null);
+            const [activeClaimDetails, setActiveClaimDetails] = useState(null);
+            const [activeDoc, setActiveDoc] = useState(null);
+            const [ruleFilter, setRuleFilter] = useState("All");
+            const [expandedRule, setExpandedRule] = useState(null);
+            
+            const [apiKey, setApiKey] = useState(localStorage.getItem('geminiApiKey') || '');
+            const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+            
+            const [isUploading, setIsUploading] = useState(false);
+            const [isProcessing, setIsProcessing] = useState(false);
+            const fileInputRef = useRef(null);
+
+            const fetchClaims = () => {
+                fetch('/api/claims')
+                    .then(res => res.json())
+                    .then(data => {
+                        setClaims(data);
+                        if (data.length > 0 && !selectedClaim) {
+                            setSelectedClaim(data[0].id);
+                        }
+                    })
+                    .catch(console.error);
+            };
+
+            useEffect(() => {
+                fetchClaims();
+            }, []);
+
+            useEffect(() => {
+                if (!selectedClaim) return;
+                fetch(`/api/claims/${selectedClaim}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        setActiveClaimDetails(data);
+                        if (data.documents && data.documents.length > 0) {
+                            setActiveDoc(data.documents[0].id);
+                        } else {
+                            setActiveDoc(null);
+                        }
+                        if (data.flags && data.flags.length > 0) {
+                            setExpandedRule(data.flags[0].rule_id);
+                        }
+                    })
+                    .catch(console.error);
+            }, [selectedClaim]);
+
+            const handleFileUpload = (e) => {
+                const files = e.target.files;
+                if (!files.length) return;
+                
+                const formData = new FormData();
+                for (let i = 0; i < files.length; i++) {
+                    formData.append('files', files[i]);
+                }
+                
+                setIsUploading(true);
+                fetch('/api/claims/upload', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(res => res.json())
+                .then(data => {
+                    setIsUploading(false);
+                    fetchClaims();
+                    setSelectedClaim(data.claim_id);
+                })
+                .catch(err => {
+                    console.error(err);
+                    setIsUploading(false);
+                    alert("Upload failed.");
+                });
+            };
+
+            const processClaim = (claimId) => {
+                if (!apiKey) {
+                    setShowApiKeyModal(true);
+                    return;
+                }
+                
+                setIsProcessing(true);
+                fetch(`/api/claims/${claimId}/process`, {
+                    method: 'POST',
+                    headers: {
+                        'x-gemini-api-key': apiKey
+                    }
+                })
+                .then(res => {
+                    if(!res.ok) throw new Error("Processing failed");
+                    return res.json();
+                })
+                .then(data => {
+                    setIsProcessing(false);
+                    setActiveClaimDetails(data);
+                    fetchClaims();
+                })
+                .catch(err => {
+                    console.error(err);
+                    setIsProcessing(false);
+                    alert("Processing failed. Check console.");
+                });
+            };
+
+            const handleDecision = (decision) => {
+                if(!selectedClaim) return;
+                const comments = prompt("Optional comments for this decision:");
+                fetch(`/api/claims/${selectedClaim}/decision`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        auditor_id: "auditor-1",
+                        decision: decision,
+                        comments: comments || ""
+                    })
+                })
+                .then(res => res.json())
+                .then(() => {
+                    fetch(`/api/claims/${selectedClaim}`).then(res => res.json()).then(setActiveClaimDetails);
+                    fetchClaims();
+                })
+                .catch(console.error);
+            };
+
+            const saveApiKey = () => {
+                localStorage.setItem('geminiApiKey', apiKey);
+                setShowApiKeyModal(false);
+            };
+
+            const getRiskColor = (score, isBg = false) => {
+                if (score <= 25) return isBg ? "bg-green-500/20 text-green-400" : "text-green-400";
+                if (score <= 50) return isBg ? "bg-yellow-500/20 text-yellow-400" : "text-yellow-400";
+                if (score <= 75) return isBg ? "bg-orange-500/20 text-orange-400" : "text-orange-400";
+                return isBg ? "bg-red-500/20 text-red-400" : "text-red-400";
+            };
+
+            const getStatusColor = (status) => {
+                if (status === "Pending") return "bg-slate-700 text-slate-300 border border-slate-600";
+                if (status === "Approved") return "bg-green-500/20 text-green-400 border border-green-500/30";
+                if (status === "Flagged") return "bg-red-500/20 text-red-400 border border-red-500/30";
+                if (status === "Query") return "bg-amber-500/20 text-amber-400 border border-amber-500/30";
+                if (status === "Rejected") return "bg-red-900/40 text-red-400 border border-red-500/30";
+                return "bg-slate-700 text-slate-300 border border-slate-600";
+            };
+
+            const activeClaimObj = claims.find(c => c.id === selectedClaim);
+            const currentStatus = activeClaimDetails ? activeClaimDetails.status : (activeClaimObj ? activeClaimObj.status : "Pending");
+            
+            const triggeredRules = activeClaimDetails && activeClaimDetails.flags ? activeClaimDetails.flags : [];
+            const docData = [];
+            if(activeClaimDetails && activeClaimDetails.profile) {
+                Object.entries(activeClaimDetails.profile).forEach(([k, v]) => {
+                    if (typeof v !== 'object') {
+                        docData.push({ label: k.replace(/_/g, ' '), value: String(v), flagged: false });
+                    }
+                });
+            }
+
+            const formatTime = (timeStr) => {
+                if (!timeStr) return "";
+                const d = new Date(timeStr);
+                return d.toLocaleDateString() + " " + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            };
+
+            return (
+                <div className="flex flex-col h-screen overflow-hidden bg-navy-900 text-slate-200">
+                    {/* Top Navbar */}
+                    <header className="h-[56px] bg-navy-800 border-b border-slate-700 flex items-center justify-between px-6 shrink-0 z-10 shadow-lg">
+                        <div className="flex items-center gap-2">
+                            <i className="fa-solid fa-shield-halved text-brand-500 text-xl glow-brand"></i>
+                            <h1 className="font-bold text-lg tracking-tight text-white">InsurAudit<span className="text-brand-500">.AI</span></h1>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <button onClick={() => setShowApiKeyModal(true)} className="text-slate-400 hover:text-white transition-colors text-sm">
+                                <i className="fa-solid fa-gear mr-1"></i> API Key
+                            </button>
+                            <input 
+                                type="file" 
+                                multiple 
+                                ref={fileInputRef} 
+                                style={{display: 'none'}} 
+                                onChange={handleFileUpload} 
+                                accept=".pdf,.png,.jpg,.jpeg"
+                            />
+                            <button 
+                                onClick={() => fileInputRef.current.click()} 
+                                disabled={isUploading}
+                                className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 text-sm font-medium rounded shadow-lg transition-colors border border-brand-500 flex items-center gap-2 disabled:opacity-50"
+                            >
+                                {isUploading ? <span className="spinner"></span> : <i className="fa-solid fa-upload"></i>}
+                                Upload New Claim
+                            </button>
+                        </div>
+                    </header>
+
+                    <div className="flex flex-1 h-screen-nav overflow-hidden">
+                        {/* LEFT SIDEBAR */}
+                        <aside className="w-[280px] bg-navy-800 border-r border-slate-700 flex flex-col shrink-0 z-0">
+                            <div className="p-4 border-b border-slate-700 bg-navy-900/30">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h2 className="font-semibold text-slate-200 text-sm">Claims Queue</h2>
+                                    <span className="bg-slate-700 text-slate-300 text-xs font-bold px-2 py-0.5 rounded">{claims.length}</span>
+                                </div>
+                                <div className="relative mb-3">
+                                    <i className="fa-solid fa-search absolute left-3 top-2.5 text-slate-500 text-xs"></i>
+                                    <input type="text" placeholder="Search..." className="w-full bg-navy-900 border border-slate-700 text-slate-300 text-sm py-1.5 pl-8 pr-3 rounded outline-none focus:border-brand-500 transition-colors" />
+                                </div>
+                                <div className="flex justify-between text-xs font-semibold text-slate-400 border-b border-slate-700 pb-2">
+                                    <button className="text-brand-400 border-b-2 border-brand-500 pb-2 -mb-2.5">All</button>
+                                    <button className="hover:text-slate-200 transition-colors">Pending</button>
+                                    <button className="hover:text-slate-200 transition-colors">Approved</button>
+                                </div>
+                            </div>
+                            <div className="flex-1 overflow-y-auto">
+                                {claims.map(claim => (
+                                    <div 
+                                        key={claim.id} 
+                                        onClick={() => setSelectedClaim(claim.id)}
+                                        className={`p-3 border-b border-slate-700/50 cursor-pointer transition-colors ${selectedClaim === claim.id ? 'bg-brand-500/10 border-l-4 border-l-brand-500' : 'border-l-4 border-l-transparent hover:bg-slate-700/30'}`}
+                                    >
+                                        <div className="flex justify-between items-start mb-1">
+                                            <div>
+                                                <div className="font-bold text-sm text-slate-100">{claim.patient_name || 'Unknown Patient'}</div>
+                                                <div className="text-xs text-slate-400 font-medium">{claim.policy_number || 'N/A'}</div>
+                                            </div>
+                                            <div className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${getRiskColor(claim.risk_score, true)}`}>
+                                                {claim.risk_score}
+                                            </div>
+                                        </div>
+                                        <div className="flex justify-between items-center mt-2">
+                                            <div className="text-sm font-bold text-slate-300">Rs. {claim.total_claimed || 0}</div>
+                                            <div className="flex items-center gap-2 text-[9px] uppercase font-bold tracking-wider">
+                                                <span className={`px-1.5 py-0.5 rounded ${getStatusColor(claim.status)}`}>{claim.status}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                                {claims.length === 0 && <div className="p-5 text-center text-sm text-slate-500">No claims found. Upload one to start.</div>}
+                            </div>
+                        </aside>
+
+                        {/* MAIN CONTENT */}
+                        <main className="flex-1 flex flex-col min-w-0 bg-navy-900 overflow-y-auto relative">
+                            {activeClaimDetails ? (
+                                <>
+                                    {/* Section 1 - Patient Header Bar */}
+                                    <div className="h-[80px] bg-navy-800 border-b border-slate-700 flex items-center justify-between px-6 shrink-0 shadow-sm z-10 relative">
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-10 h-10 bg-slate-700 border border-slate-600 text-slate-300 rounded-full flex items-center justify-center font-bold text-lg">
+                                                {(activeClaimDetails.patient_name || "U")[0]}
+                                            </div>
+                                            <div>
+                                                <h2 className="text-[18px] font-bold text-white leading-tight">{activeClaimDetails.patient_name || "Unknown Patient"}</h2>
+                                                <div className="text-xs text-slate-400 font-medium flex gap-3 mt-1">
+                                                    <span><i className="fa-solid fa-file-contract mr-1 text-slate-500"></i>{activeClaimDetails.policy_number || "N/A"}</span>
+                                                    <span><i className="fa-regular fa-clock mr-1 text-slate-500"></i>{formatTime(activeClaimDetails.created_at)}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-3">
+                                            <div className="bg-navy-900 border border-slate-700 px-4 py-2 rounded flex flex-col items-center justify-center min-w-[100px]">
+                                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">Claimed Amount</span>
+                                                <span className="font-bold text-slate-200 text-sm">Rs. {activeClaimDetails.total_claimed || 0}</span>
+                                            </div>
+                                            <div className="bg-navy-900 border border-slate-700 px-4 py-2 rounded flex flex-col items-center justify-center min-w-[100px]">
+                                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">Admission Date</span>
+                                                <span className="font-bold text-slate-200 text-sm">{activeClaimDetails.admission_date || "N/A"}</span>
+                                            </div>
+                                            <div className="bg-navy-900 border border-slate-700 px-4 py-2 rounded flex flex-col items-center justify-center min-w-[100px]">
+                                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">Discharge Date</span>
+                                                <span className="font-bold text-slate-200 text-sm">{activeClaimDetails.discharge_date || "N/A"}</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-4 border-l border-slate-700 pl-6 ml-2">
+                                            <ArcGauge score={activeClaimDetails.risk_score || 0} />
+                                            <div className="flex flex-col">
+                                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">Risk Profile</span>
+                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded inline-block text-center tracking-wider ${getRiskColor(activeClaimDetails.risk_score || 0, true)}`}>
+                                                    {activeClaimDetails.risk_score > 50 ? 'ELEVATED' : 'STANDARD'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Section 2 - Document Viewer */}
+                                    <div className="h-[420px] shrink-0 flex flex-col border-b border-slate-700 bg-navy-800 p-5 relative">
+                                        
+                                        {!activeClaimDetails.summary && (
+                                            <div className="absolute inset-0 z-20 bg-navy-900/80 backdrop-blur-sm flex flex-col items-center justify-center">
+                                                <i className="fa-solid fa-microchip text-4xl text-brand-500 mb-4 animate-bounce"></i>
+                                                <h3 className="text-xl font-bold text-white mb-2">AI Processing Required</h3>
+                                                <p className="text-slate-400 text-sm mb-6 max-w-md text-center">This claim has been uploaded but not yet processed by the AI auditor. Run the pipeline to extract data and evaluate rules.</p>
+                                                <button 
+                                                    onClick={() => processClaim(activeClaimDetails.id)} 
+                                                    disabled={isProcessing}
+                                                    className="bg-brand-600 hover:bg-brand-500 text-white px-6 py-3 font-bold rounded shadow-lg transition-colors border border-brand-500 flex items-center gap-2 disabled:opacity-50"
+                                                >
+                                                    {isProcessing ? <><span className="spinner"></span> Processing...</> : <><i className="fa-solid fa-play"></i> Run AI Pipeline</>}
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        <div className="flex gap-6 border-b border-slate-700 mb-4 px-1">
+                                            {(activeClaimDetails.documents || []).map(doc => (
+                                                <button 
+                                                    key={doc.id}
+                                                    onClick={() => setActiveDoc(doc.id)}
+                                                    className={`pb-3 text-sm font-semibold transition-colors relative ${activeDoc === doc.id ? 'text-brand-400' : 'text-slate-400 hover:text-slate-200'}`}
+                                                >
+                                                    {doc.file_name}
+                                                    {activeDoc === doc.id && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-500 glow-brand"></div>}
+                                                </button>
+                                            ))}
+                                            {(activeClaimDetails.documents || []).length === 0 && <span className="text-sm text-slate-500">No documents found</span>}
+                                        </div>
+                                        <div className="flex-1 flex gap-4 overflow-hidden">
+                                            {/* OCR Text / Document Info Panel */}
+                                            <div className="w-1/2 border border-slate-700 rounded flex flex-col relative overflow-hidden bg-navy-900 shadow-inner">
+                                                <div className="p-3 bg-navy-800 border-b border-slate-700 text-xs font-bold text-slate-400 uppercase tracking-wider flex justify-between">
+                                                    <span>Extracted Text (OCR)</span>
+                                                    {activeDoc && activeClaimDetails.documents && (
+                                                        <span className="text-brand-400">{activeClaimDetails.documents.find(d => d.id === activeDoc)?.doc_type}</span>
+                                                    )}
+                                                </div>
+                                                <div className="flex-1 overflow-y-auto p-4 text-xs font-mono text-slate-300 whitespace-pre-wrap">
+                                                    {activeDoc && activeClaimDetails.documents && activeClaimDetails.documents.find(d => d.id === activeDoc)?.ocr_text ? 
+                                                        activeClaimDetails.documents.find(d => d.id === activeDoc).ocr_text : "No text extracted."}
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Extracted Fields Table */}
+                                            <div className="w-1/2 border border-slate-700 rounded flex flex-col relative overflow-hidden bg-navy-900 shadow-inner">
+                                                <div className="flex-1 overflow-y-auto">
+                                                    <table className="w-full text-sm text-left">
+                                                        <tbody>
+                                                            {docData.map((row, idx) => (
+                                                                <tr key={idx} className={`border-b border-slate-800 last:border-0 ${row.flagged ? 'bg-orange-500/10' : 'hover:bg-slate-800/50'}`}>
+                                                                    <td className="py-3 px-5 font-semibold text-slate-400 text-xs uppercase tracking-wider w-1/3 align-middle border-r border-slate-800">
+                                                                        {row.label}
+                                                                    </td>
+                                                                    <td className={`py-3 px-5 font-medium align-middle ${row.flagged ? 'text-amber-400' : 'text-slate-200'}`}>
+                                                                        <div className="flex items-center gap-2">
+                                                                            {row.flagged && <i className="fa-solid fa-triangle-exclamation text-orange-500 text-[12px]"></i>}
+                                                                            {row.value}
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                            {docData.length === 0 && (
+                                                                <tr><td className="p-5 text-slate-500 text-center text-sm" colSpan="2">No fields extracted yet.</td></tr>
+                                                            )}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Section 3 - AI Auditor Summary */}
+                                    <div className="flex-1 p-6 flex flex-col gap-4 bg-navy-900">
+                                        <h3 className="font-bold text-slate-200 text-sm flex items-center gap-2 uppercase tracking-wide">
+                                            <i className="fa-solid fa-robot text-brand-400"></i> AI Audit Summary
+                                        </h3>
+                                        <div className="bg-navy-800 border border-slate-700 border-l-4 border-l-brand-500 p-4 rounded shadow">
+                                            <p className="text-sm text-slate-300 leading-relaxed font-medium">
+                                                {activeClaimDetails.summary || "Waiting for AI processing..."}
+                                            </p>
+                                        </div>
+                                        <div className="flex gap-4 mt-1">
+                                            <div className="bg-navy-800 border border-slate-700 rounded px-4 py-2 flex items-center gap-3 shadow-sm">
+                                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Documents Complete</span>
+                                                <span className="font-bold text-slate-200 text-sm">{(activeClaimDetails.documents||[]).length}</span>
+                                            </div>
+                                            <div className="bg-navy-800 border border-slate-700 rounded px-4 py-2 flex items-center gap-3 shadow-sm">
+                                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Rules Triggered</span>
+                                                <span className="font-bold text-red-400 text-sm">{(activeClaimDetails.flags||[]).length}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="flex items-center justify-center h-full text-slate-500">
+                                    Select a claim to view details
+                                </div>
+                            )}
+                        </main>
+
+                        {/* RIGHT PANEL */}
+                        <aside className="w-[340px] bg-navy-800 border-l border-slate-700 flex flex-col shrink-0 z-0">
+                            
+                            {/* Top: Rules Engine */}
+                            <div className="flex flex-col h-[50%] border-b border-slate-700">
+                                <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-navy-900/40">
+                                    <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                                        Rules Engine <span className="bg-slate-700 text-slate-300 text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider border border-slate-600">{(activeClaimDetails?.flags||[]).length} TRIGGERED</span>
+                                    </h3>
+                                    {activeClaimDetails && (
+                                        <button onClick={() => processClaim(activeClaimDetails.id)} className="text-xs font-bold text-brand-400 hover:text-brand-300 transition-colors uppercase tracking-wider">
+                                            Re-run
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="flex gap-6 px-4 pt-3 text-xs font-bold text-slate-500 border-b border-slate-700 pb-0 uppercase tracking-wider bg-navy-800">
+                                    <button onClick={() => setRuleFilter('Triggered')} className={`pb-2 transition-colors relative ${ruleFilter === 'Triggered' ? 'text-slate-200' : 'hover:text-slate-400'}`}>
+                                        Triggered
+                                        {ruleFilter === 'Triggered' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-500 glow-brand"></div>}
+                                    </button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-0 bg-navy-900/50">
+                                    {triggeredRules.map(rule => (
+                                        <div key={`trig-${rule.rule_id}`} className="border-b border-slate-700 bg-navy-800">
+                                            <div 
+                                                className="p-3 pl-4 flex items-start gap-3 cursor-pointer hover:bg-slate-700/50 transition-colors"
+                                                onClick={() => setExpandedRule(expandedRule === rule.rule_id ? null : rule.rule_id)}
+                                            >
+                                                <div className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${rule.severity === 'HIGH' ? 'bg-red-500 glow-red' : 'bg-orange-500'}`}></div>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex justify-between items-start mb-1 gap-2">
+                                                        <span className="font-semibold text-sm text-slate-200 leading-tight">{rule.rule_id}</span>
+                                                        <span className={`text-[9px] font-bold px-1.5 py-0.5 uppercase tracking-wider rounded border shrink-0 ${rule.severity === 'HIGH' ? 'bg-red-500/20 text-red-400 border-red-500/30' : 'bg-orange-500/20 text-orange-400 border-orange-500/30'}`}>{rule.severity}</span>
+                                                    </div>
+                                                </div>
+                                                <i className={`fa-solid fa-chevron-down text-xs text-slate-500 mt-1 transition-transform duration-200 ${expandedRule === rule.rule_id ? 'rotate-180' : ''}`}></i>
+                                            </div>
+                                            {expandedRule === rule.rule_id && (
+                                                <div className="px-4 pb-4 pt-0 pl-9">
+                                                    <p className="text-xs text-slate-300 mb-2 leading-relaxed font-medium">{rule.message}</p>
+                                                    <div className="bg-slate-900 border border-slate-700 rounded p-2 text-xs font-mono text-slate-400 mb-3 break-words">
+                                                        {rule.evidence || "No specific evidence provided."}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                    {triggeredRules.length === 0 && (
+                                        <div className="p-5 text-center text-slate-500 text-sm">No rules triggered.</div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Bottom: Auditor Decision */}
+                            <div className="flex-1 flex flex-col bg-navy-900">
+                                <div className="p-5 flex flex-col h-full justify-between">
+                                    <div>
+                                        <div className="flex justify-between items-center mb-3">
+                                            <h3 className="font-bold text-white text-sm">Auditor Decision</h3>
+                                            <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${getStatusColor(currentStatus)}`}>{currentStatus}</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="mt-4">
+                                        <div className="flex gap-3 mb-3">
+                                            <button onClick={() => handleDecision('Query')} disabled={!activeClaimDetails} className="flex-1 bg-navy-800 border-2 border-amber-500/50 text-amber-400 hover:bg-amber-500/10 rounded font-bold text-[11px] uppercase tracking-wider py-2 transition-colors disabled:opacity-50">
+                                                Query
+                                            </button>
+                                            <button onClick={() => handleDecision('Rejected')} disabled={!activeClaimDetails} className="flex-1 bg-navy-800 border-2 border-red-500/50 text-red-400 hover:bg-red-500/10 rounded font-bold text-[11px] uppercase tracking-wider py-2 transition-colors disabled:opacity-50">
+                                                Reject
+                                            </button>
+                                        </div>
+                                        <button onClick={() => handleDecision('Approved')} disabled={!activeClaimDetails} className="w-full bg-green-600 hover:bg-green-500 text-white rounded font-bold text-[11px] uppercase tracking-wider py-3 transition-colors border-2 border-green-500 shadow-lg shadow-green-900/50 disabled:opacity-50">
+                                            Approve Claim
+                                        </button>
+                                        <p className="text-center text-[10px] text-slate-500 mt-3 font-semibold uppercase tracking-wider">Decision logged with auditor ID and timestamp</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </aside>
+                    </div>
+
+                    {/* API Key Modal */}
+                    {showApiKeyModal && (
+                        <div className="absolute inset-0 z-50 bg-navy-900/80 backdrop-blur-sm flex items-center justify-center">
+                            <div className="bg-navy-800 border border-slate-700 p-6 rounded-lg shadow-2xl w-96">
+                                <h3 className="text-lg font-bold text-white mb-2">Gemini API Key Required</h3>
+                                <p className="text-sm text-slate-400 mb-4">To process claims using the AI auditor pipeline, you must provide a Gemini API key. This is stored locally in your browser.</p>
+                                <input 
+                                    type="password" 
+                                    value={apiKey}
+                                    onChange={(e) => setApiKey(e.target.value)}
+                                    placeholder="AIzaSy..."
+                                    className="w-full bg-navy-900 border border-slate-600 text-white p-2 rounded mb-4 focus:border-brand-500 outline-none"
+                                />
+                                <div className="flex justify-end gap-3">
+                                    <button onClick={() => setShowApiKeyModal(false)} className="px-4 py-2 text-slate-400 hover:text-white transition-colors">Cancel</button>
+                                    <button onClick={saveApiKey} className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded font-medium transition-colors">Save Key</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+"""
+with open("update_frontend.py", "w", encoding="utf-8") as f:
+    f.write(html_content)

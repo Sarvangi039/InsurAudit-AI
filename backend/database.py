@@ -199,6 +199,18 @@ def save_audit_flags(claim_id: str, flags: list):
     conn.commit()
     conn.close()
 
+def delete_claim(claim_id: str):
+    """Deletes a claim and all its associated documents and flags from the database."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM audit_flags WHERE claim_id = ?", (claim_id,))
+    cursor.execute("DELETE FROM documents WHERE claim_id = ?", (claim_id,))
+    cursor.execute("DELETE FROM claims WHERE id = ?", (claim_id,))
+    
+    conn.commit()
+    conn.close()
+
 def log_decision(claim_id: str, auditor_id: str, decision: str, comments: str):
     """Saves a decision entry to the immutable decisions log and updates the claim status."""
     conn = get_db_connection()
